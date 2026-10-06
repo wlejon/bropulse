@@ -1,0 +1,10 @@
+build/
+build-*/
+bin/
+*.o
+*.a
+*.so
+.cache/
+compile_commands.json
+.ninja_*
+*.log
