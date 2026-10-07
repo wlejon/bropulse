@@ -17,6 +17,11 @@ public:
 };
 
 int main() {
+    if (!bropulse::AudioRouter::is_pipewire_available() &&
+        !bropulse::AudioRouter::is_pulseaudio_available()) {
+        bstest::skip("test_router", "no PipeWire or PulseAudio server is running");
+    }
+
     // 1. Backend creation
     auto router = bropulse::AudioRouter::create(bropulse::Backend::Auto);
     REQUIRE(router != nullptr);

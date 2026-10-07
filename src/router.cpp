@@ -1,12 +1,17 @@
 #include <bropulse/router.h>
+
+#if BROPULSE_LINUX_BACKENDS
 #include "src/pipewire/pw_router.h"
 #include "src/pulse/pa_router.h"
 
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
+#endif
 
 namespace bropulse {
+
+#if BROPULSE_LINUX_BACKENDS
 
 bool AudioRouter::is_pipewire_available() {
     const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
@@ -60,5 +65,14 @@ std::unique_ptr<AudioRouter> AudioRouter::create(Backend backend) {
 
     return nullptr;
 }
+
+#else
+
+// No Linux audio server on this platform: there is nothing to route.
+bool AudioRouter::is_pipewire_available() { return false; }
+bool AudioRouter::is_pulseaudio_available() { return false; }
+std::unique_ptr<AudioRouter> AudioRouter::create(Backend) { return nullptr; }
+
+#endif
 
 } // namespace bropulse

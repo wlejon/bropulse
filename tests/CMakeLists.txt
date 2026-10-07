@@ -4,10 +4,12 @@ set(TEST_TARGETS
     test_stream_graph
     test_volume
     test_policy
-    test_pipewire
-    test_pulse
-    test_router
 )
+# The routers talk to a running PipeWire / PulseAudio server; they skip (77)
+# when none is running.
+if(BROPULSE_LINUX_BACKENDS)
+    list(APPEND TEST_TARGETS test_pipewire test_pulse test_router)
+endif()
 
 foreach(t ${TEST_TARGETS})
     add_executable(${t} ${t}.cpp)
@@ -15,6 +17,7 @@ foreach(t ${TEST_TARGETS})
     target_link_libraries(${t} PRIVATE bropulse::bropulse)
     target_include_directories(${t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR})
     add_test(NAME ${t} COMMAND ${t})
+    set_tests_properties(${t} PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()
 
 if(BROPULSE_ENABLE_API)
@@ -43,5 +46,16 @@ if(BROPULSE_ENABLE_API)
     endif()
     add_test(NAME test_api COMMAND test_api)
     set_tests_properties(test_api PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+endif()
+
+# Every test executable links no_dialogs.cpp (see the file).
+if(WIN32)
+    get_property(_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_t IN LISTS _test_targets)
+        get_target_property(_type ${_t} TYPE)
+        if(_type STREQUAL "EXECUTABLE")
+            target_sources(${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/no_dialogs.cpp)
+        endif()
+    endforeach()
 endif()
 

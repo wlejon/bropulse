@@ -36,23 +36,39 @@ function(bropulse_warnings target)
     endif()
 endfunction()
 
-find_package(PkgConfig REQUIRED)
-find_package(Threads REQUIRED)
+if(MSVC)
+    # The DLL CRT, so the tests share one heap with bronze_runtime_shared.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
 
-pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
-pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+find_package(Threads REQUIRED)
 
 set(BROPULSE_SOURCES
     src/stream_graph.cpp
     src/policy.cpp
     src/router.cpp
-    src/pipewire/pw_router.cpp
-    src/pulse/pa_router.cpp
 )
+
+# The PipeWire and PulseAudio routers are Linux's audio servers. Elsewhere the
+# stream graph and policy still build, and AudioRouter::create() finds no
+# backend, so bro.pulse reports no sinks rather than failing to build.
+set(BROPULSE_LINUX_BACKENDS OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+    pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+    list(APPEND BROPULSE_SOURCES
+        src/pipewire/pw_router.cpp
+        src/pulse/pa_router.cpp
+    )
+    set(BROPULSE_LINUX_BACKENDS ON)
+endif()
 
 add_library(bropulse STATIC ${BROPULSE_SOURCES})
 add_library(bropulse::bropulse ALIAS bropulse)
 bropulse_warnings(bropulse)
+target_compile_definitions(bropulse PRIVATE
+    BROPULSE_LINUX_BACKENDS=$<BOOL:${BROPULSE_LINUX_BACKENDS}>)
 
 target_include_directories(bropulse
     PUBLIC
@@ -62,12 +78,10 @@ target_include_directories(bropulse
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(bropulse
-    PUBLIC
-        Threads::Threads
-        PkgConfig::PIPEWIRE
-        PkgConfig::PULSE
-)
+target_link_libraries(bropulse PUBLIC Threads::Threads)
+if(BROPULSE_LINUX_BACKENDS)
+    target_link_libraries(bropulse PUBLIC PkgConfig::PIPEWIRE PkgConfig::PULSE)
+endif()
 
 # --- Standalone Bronze JavaScript API ---
 option(BROPULSE_ENABLE_API "Build Bronze JavaScript API" ${PROJECT_IS_TOP_LEVEL})

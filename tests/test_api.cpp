@@ -3,6 +3,7 @@
 #include "eval/eval.h"
 #include "check.h"
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -237,9 +238,14 @@ int main() {
     // 8. Test setAudioRouter / getAudioRouter
     std::cout << "Testing AudioRouter accessors..." << std::endl;
     {
+        // A running audio server gives a running router. Where there is none
+        // (Windows, macOS, a CI runner) there is nothing to require.
         auto router = bropulse::api::getAudioRouter();
-        REQUIRE(router != nullptr);
-        CHECK_TRUE(router->is_running());
+        if (bropulse::AudioRouter::is_pipewire_available() ||
+            bropulse::AudioRouter::is_pulseaudio_available()) {
+            REQUIRE(router != nullptr);
+            CHECK_TRUE(router->is_running());
+        }
 
         // Create an explicit secondary router and set it
         auto router2 = bropulse::AudioRouter::create(bropulse::Backend::Auto);
@@ -252,9 +258,11 @@ int main() {
         std::cout << "  AudioRouter accessors [PASS]" << std::endl;
     }
 
-    // 9. Test real sink operations if any sinks exist
-    std::cout << "Testing real sink volume/mute if sinks available..." << std::endl;
-    {
+    // 9. Real sink volume/mute: writes the machine's own audio settings, so
+    // only where BROPULSE_TEST_MUTATE=1 says the machine is disposable (CI).
+    const char* mutate = std::getenv("BROPULSE_TEST_MUTATE");
+    if (mutate && std::string(mutate) == "1") {
+        std::cout << "Testing real sink volume/mute if sinks available..." << std::endl;
         auto r = evalScript(
             "(function() {\n"
             "  const sinks = bro.pulse.getSinks();\n"
