@@ -13,8 +13,8 @@ concurrency:
 # bropulse's PipeWire and PulseAudio routers are Linux-only; Windows and macOS
 # build the stream graph and policy with no audio server. Hosted runners have
 # no audio server running, so the router tests skip (77) there. The binding
-# (bropulse_api) binds bronze, which (with brass) comes from the commit
-# CMakeLists.txt pins (cmake/bro_deps.cmake), fetched at configure.
+# (bropulse_api) binds bronze, which (with brass) comes from the head
+# of its main branch (cmake/bro_deps.cmake), fetched at configure.
 # BROPULSE_TEST_MUTATE=1: a runner is
 # disposable, so the API test may write sink volume and mute.
 jobs:
