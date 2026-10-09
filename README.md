@@ -72,6 +72,10 @@ cmake -G Ninja ..
 ninja
 ```
 
+A plain `git clone` is enough: bronze (for the JavaScript binding) is a `bro_dependency()` pin in
+`CMakeLists.txt` (`cmake/bro_deps.cmake`), taken from `../bronze` when that working tree exists
+and otherwise fetched at configure.
+
 ## Running Tests
 
 Tests use the custom zero-dependency `tests/check.h` harness without assertions, exercising live node discovery, stream graph topology, volume math, and policy rules:
