@@ -140,11 +140,17 @@ StreamObserver* pulseObserver() {
 
 void addPulseEventListener(const std::string& event, Value callback) {
     if (!ev::isFunction(callback)) return;
-    std::lock_guard lock(g_sub_mu);
-    Subscription sub;
-    sub.event = event;
-    sub.callback = std::make_shared<ev::Persistent>(callback);
-    g_subscriptions.push_back(std::move(sub));
+    {
+        std::lock_guard lock(g_sub_mu);
+        Subscription sub;
+        sub.event = event;
+        sub.callback = std::make_shared<ev::Persistent>(callback);
+        g_subscriptions.push_back(std::move(sub));
+    }
+    // A listener is what needs the router's events: start it now if no
+    // call has yet (the frame tick does not, so a page that never touches
+    // bro.pulse never connects to the sound server).
+    activeAudioRouter();
 }
 
 void removePulseEventListener(const std::string& event, Value callback) {

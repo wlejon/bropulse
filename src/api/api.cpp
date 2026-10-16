@@ -97,7 +97,7 @@ void installPulse() {
 }
 
 void tickPulseAsync() {
-    activeAudioRouter();
+    // Only drains: the router starts on bro.pulse's first use, not here.
     drainPulseEvents();
 }
 
