@@ -24,6 +24,7 @@ struct QueuedPulseEvent {
     std::string eventName;
     std::optional<AudioSink> sink;
     std::optional<AudioStream> stream;
+    std::optional<StreamRoute> route;
     uint32_t id{0};
 };
 
@@ -34,37 +35,42 @@ class PulseApiObserver : public StreamObserver {
 public:
     void on_sink_added(const AudioSink& sink) override {
         std::lock_guard lock(g_event_queue_mu);
-        g_queued_events.push_back({"sinkAdded", sink, std::nullopt, sink.id});
+        g_queued_events.push_back({"sinkAdded", sink, std::nullopt, std::nullopt, sink.id});
     }
 
     void on_sink_updated(const AudioSink& sink) override {
         std::lock_guard lock(g_event_queue_mu);
-        g_queued_events.push_back({"sinkUpdated", sink, std::nullopt, sink.id});
+        g_queued_events.push_back({"sinkUpdated", sink, std::nullopt, std::nullopt, sink.id});
     }
 
     void on_sink_removed(uint32_t sink_id) override {
         std::lock_guard lock(g_event_queue_mu);
-        g_queued_events.push_back({"sinkRemoved", std::nullopt, std::nullopt, sink_id});
+        g_queued_events.push_back({"sinkRemoved", std::nullopt, std::nullopt, std::nullopt, sink_id});
     }
 
     void on_stream_added(const AudioStream& stream) override {
         std::lock_guard lock(g_event_queue_mu);
-        g_queued_events.push_back({"streamAdded", std::nullopt, stream, stream.id});
+        g_queued_events.push_back({"streamAdded", std::nullopt, stream, std::nullopt, stream.id});
     }
 
     void on_stream_updated(const AudioStream& stream) override {
         std::lock_guard lock(g_event_queue_mu);
-        g_queued_events.push_back({"streamUpdated", std::nullopt, stream, stream.id});
+        g_queued_events.push_back({"streamUpdated", std::nullopt, stream, std::nullopt, stream.id});
     }
 
     void on_stream_removed(uint32_t stream_id) override {
         std::lock_guard lock(g_event_queue_mu);
-        g_queued_events.push_back({"streamRemoved", std::nullopt, std::nullopt, stream_id});
+        g_queued_events.push_back({"streamRemoved", std::nullopt, std::nullopt, std::nullopt, stream_id});
     }
 
     void on_default_sink_changed(uint32_t sink_id) override {
         std::lock_guard lock(g_event_queue_mu);
-        g_queued_events.push_back({"defaultSinkChanged", std::nullopt, std::nullopt, sink_id});
+        g_queued_events.push_back({"defaultSinkChanged", std::nullopt, std::nullopt, std::nullopt, sink_id});
+    }
+
+    void on_route_changed(const StreamRoute& route) override {
+        std::lock_guard lock(g_event_queue_mu);
+        g_queued_events.push_back({"routeChanged", std::nullopt, std::nullopt, route, route.stream_id});
     }
 };
 
@@ -132,6 +138,18 @@ Value streamToJs(const AudioStream& stream) {
     return b.build();
 }
 
+Value routeToJs(const StreamRoute& route) {
+    ObjectBuilder b;
+    b.set("type", "routeChanged");
+    b.set("id", static_cast<double>(route.stream_id));
+    b.set("streamId", static_cast<double>(route.stream_id));
+    b.set("sinkId", static_cast<double>(route.sink_id));
+    b.set("streamName", route.stream_name);
+    b.set("sinkName", route.sink_name);
+    b.set("isActive", route.is_active);
+    return b.build();
+}
+
 } // namespace
 
 StreamObserver* pulseObserver() {
@@ -154,12 +172,14 @@ void addPulseEventListener(const std::string& event, Value callback) {
 }
 
 void removePulseEventListener(const std::string& event, Value callback) {
-    if (!ev::isFunction(callback)) return;
+    bool removeAll = ev::isUndefined(callback) || ev::isNull(callback);
+    if (!removeAll && !ev::isFunction(callback)) return;
     std::lock_guard lock(g_sub_mu);
     g_subscriptions.erase(
         std::remove_if(g_subscriptions.begin(), g_subscriptions.end(),
                        [&](const Subscription& sub) {
                            if (sub.event != event) return false;
+                           if (removeAll) return true;
                            return sub.callback && sub.callback->get() == callback;
                        }),
         g_subscriptions.end());
@@ -188,6 +208,9 @@ void drainPulseEvents() {
             dispatchPulseEvent(evData.eventName, p.get(), evData.id);
         } else if (evData.stream) {
             ev::Persistent p(streamToJs(*evData.stream));
+            dispatchPulseEvent(evData.eventName, p.get(), evData.id);
+        } else if (evData.route) {
+            ev::Persistent p(routeToJs(*evData.route));
             dispatchPulseEvent(evData.eventName, p.get(), evData.id);
         } else {
             ObjectBuilder b;
@@ -347,12 +370,15 @@ void installPulseOnto(Value pulseVal) {
         return self;
     });
 
-    // bro.pulse.off(event, callback)
+    // bro.pulse.off(event, callback?)
     pulse.def("off", 2, [](Value self, std::span<const Value> args) -> Value {
-        if (args.size() < 2) return self;
+        if (args.empty()) return self;
         ev::Persistent arg0(args[0]);
-        ev::Persistent arg1(args[1]);
-        if (!ev::isString(arg0.get()) || !ev::isFunction(arg1.get())) return self;
+        ev::Persistent arg1(args.size() >= 2 ? args[1] : ev::undefined());
+        if (!ev::isString(arg0.get())) return self;
+        if (args.size() >= 2 && !ev::isUndefined(arg1.get()) && !ev::isNull(arg1.get()) && !ev::isFunction(arg1.get())) {
+            return self;
+        }
         removePulseEventListener(ev::toUtf8(arg0.get()), arg1.get());
         return self;
     });
@@ -367,12 +393,15 @@ void installPulseOnto(Value pulseVal) {
         return self;
     });
 
-    // bro.pulse.removeEventListener(event, callback)
+    // bro.pulse.removeEventListener(event, callback?)
     pulse.def("removeEventListener", 2, [](Value self, std::span<const Value> args) -> Value {
-        if (args.size() < 2) return self;
+        if (args.empty()) return self;
         ev::Persistent arg0(args[0]);
-        ev::Persistent arg1(args[1]);
-        if (!ev::isString(arg0.get()) || !ev::isFunction(arg1.get())) return self;
+        ev::Persistent arg1(args.size() >= 2 ? args[1] : ev::undefined());
+        if (!ev::isString(arg0.get())) return self;
+        if (args.size() >= 2 && !ev::isUndefined(arg1.get()) && !ev::isNull(arg1.get()) && !ev::isFunction(arg1.get())) {
+            return self;
+        }
         removePulseEventListener(ev::toUtf8(arg0.get()), arg1.get());
         return self;
     });

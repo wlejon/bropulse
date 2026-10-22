@@ -214,6 +214,14 @@ int main() {
         obs->on_stream_removed(84);
         obs->on_default_sink_changed(42);
 
+        bropulse::StreamRoute testRoute;
+        testRoute.stream_id = 84;
+        testRoute.sink_id = 42;
+        testRoute.stream_name = "TestStream";
+        testRoute.sink_name = "TestSink";
+        testRoute.is_active = true;
+        obs->on_route_changed(testRoute);
+
         bropulse::api::tickPulseAsync();
 
         auto r = evalScript(
@@ -232,6 +240,28 @@ int main() {
 
         REQUIRE(!r.thrown);
         CHECK_TRUE(ev::isBool(r.value) && ev::toBool(r.value));
+
+        // Test 1-argument bro.pulse.off(event) and bro.pulse.removeEventListener(event)
+        auto rOff = evalScript(
+            "(function() {\n"
+            "  globalThis.__offCount = 0;\n"
+            "  globalThis.__remCount = 0;\n"
+            "  bro.pulse.on('sinkAdded', () => { globalThis.__offCount++; });\n"
+            "  bro.pulse.on('sinkAdded', () => { globalThis.__offCount++; });\n"
+            "  bro.pulse.off('sinkAdded');\n"
+            "  bro.pulse.addEventListener('routeChanged', () => { globalThis.__remCount++; });\n"
+            "  bro.pulse.removeEventListener('routeChanged');\n"
+            "  return true;\n"
+            "})()\n"
+        );
+        REQUIRE(!rOff.thrown);
+        obs->on_sink_added(testSink);
+        obs->on_route_changed(testRoute);
+        bropulse::api::tickPulseAsync();
+
+        auto rVerifyOff = evalScript("globalThis.__offCount === 0 && globalThis.__remCount === 0");
+        REQUIRE(!rVerifyOff.thrown);
+        CHECK_TRUE(ev::isBool(rVerifyOff.value) && ev::toBool(rVerifyOff.value));
         std::cout << "  tickPulseAsync() and event dispatching [PASS]" << std::endl;
     }
 

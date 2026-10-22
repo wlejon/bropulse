@@ -25,6 +25,68 @@ public:
 };
 
 int main() {
+    // Offline unit test for PipeWireRouter default sink flag propagation & move_stream notifications
+    {
+        bropulse::PipeWireRouter offline_router;
+        struct DetailedObserver : public bropulse::StreamObserver {
+            std::vector<bropulse::AudioSink> added_sinks;
+            std::vector<bropulse::AudioSink> updated_sinks;
+            std::vector<bropulse::AudioStream> updated_streams;
+            std::vector<bropulse::StreamRoute> changed_routes;
+            void on_sink_added(const bropulse::AudioSink& s) override { added_sinks.push_back(s); }
+            void on_sink_updated(const bropulse::AudioSink& s) override { updated_sinks.push_back(s); }
+            void on_stream_updated(const bropulse::AudioStream& s) override { updated_streams.push_back(s); }
+            void on_route_changed(const bropulse::StreamRoute& r) override { changed_routes.push_back(r); }
+        } obs;
+        offline_router.add_observer(&obs);
+
+        offline_router.graph().set_default_sink_name("alsa_output.default");
+
+        spa_dict_item sink_items[] = {
+            { PW_KEY_NODE_NAME, "alsa_output.default" },
+            { PW_KEY_NODE_DESCRIPTION, "Default Sink" },
+            { PW_KEY_MEDIA_CLASS, "Audio/Sink" }
+        };
+        spa_dict sink_dict = SPA_DICT_INIT(sink_items, 3);
+        offline_router.handle_global(10, 0, PW_TYPE_INTERFACE_Node, 3, &sink_dict);
+        REQUIRE(obs.added_sinks.size() == 1);
+        CHECK_TRUE(obs.added_sinks[0].is_default);
+
+        pw_node_info ninfo{};
+        ninfo.id = 10;
+        ninfo.state = PW_NODE_STATE_RUNNING;
+        ninfo.props = &sink_dict;
+        offline_router.handle_node_info(10, &ninfo);
+        REQUIRE(obs.updated_sinks.size() == 1);
+        CHECK_TRUE(obs.updated_sinks[0].is_default);
+
+        // Add second sink and a stream, plus ports including monitor ("out") on sink
+        spa_dict_item sink2_items[] = {
+            { PW_KEY_NODE_NAME, "alsa_output.secondary" },
+            { PW_KEY_NODE_DESCRIPTION, "Secondary Sink" },
+            { PW_KEY_MEDIA_CLASS, "Audio/Sink" }
+        };
+        spa_dict sink2_dict = SPA_DICT_INIT(sink2_items, 3);
+        offline_router.handle_global(11, 0, PW_TYPE_INTERFACE_Node, 3, &sink2_dict);
+        REQUIRE(obs.added_sinks.size() == 2);
+        CHECK_FALSE(obs.added_sinks[1].is_default);
+
+        spa_dict_item stream_items[] = {
+            { PW_KEY_NODE_NAME, "Music Player" },
+            { PW_KEY_MEDIA_CLASS, "Stream/Output/Audio" }
+        };
+        spa_dict stream_dict = SPA_DICT_INIT(stream_items, 2);
+        offline_router.handle_global(20, 0, PW_TYPE_INTERFACE_Node, 3, &stream_dict);
+
+        CHECK_TRUE(offline_router.move_stream(20, 11));
+        REQUIRE(obs.updated_streams.size() == 1);
+        CHECK_EQ(obs.updated_streams[0].id, 20u);
+        CHECK_EQ(obs.updated_streams[0].sink_id, 11u);
+        REQUIRE(obs.changed_routes.size() == 1);
+        CHECK_EQ(obs.changed_routes[0].stream_id, 20u);
+        CHECK_EQ(obs.changed_routes[0].sink_id, 11u);
+    }
+
     if (!bropulse::AudioRouter::is_pipewire_available()) {
         bstest::skip("test_pipewire", "PipeWire daemon is not running or accessible");
     }

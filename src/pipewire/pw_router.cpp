@@ -306,9 +306,10 @@ void PipeWireRouter::handle_global(uint32_t id, uint32_t /*permissions*/,
         }
 
         if (node.is_sink()) {
-            notify_sink_added(node.to_audio_sink());
+            notify_sink_added(graph_.sink(id).value_or(node.to_audio_sink()));
         } else if (node.is_audio_stream()) {
-            notify_stream_added(node.to_audio_stream(graph_.resolve_sink_for_stream(id)));
+            notify_stream_added(graph_.stream(id).value_or(
+                node.to_audio_stream(graph_.resolve_sink_for_stream(id))));
         }
     } else if (std::strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
         PortInfo port;
@@ -430,9 +431,10 @@ void PipeWireRouter::handle_node_info(uint32_t id, const pw_node_info* info) {
     graph_.add_or_update_node(node);
 
     if (node.is_sink()) {
-        notify_sink_updated(node.to_audio_sink());
+        notify_sink_updated(graph_.sink(id).value_or(node.to_audio_sink()));
     } else if (node.is_audio_stream()) {
-        notify_stream_updated(node.to_audio_stream(graph_.resolve_sink_for_stream(id)));
+        notify_stream_updated(graph_.stream(id).value_or(
+            node.to_audio_stream(graph_.resolve_sink_for_stream(id))));
     }
 }
 
@@ -495,6 +497,8 @@ int PipeWireRouter::handle_metadata_property(uint32_t subject, const char* key,
         unsigned long tid = std::strtoul(value, &end, 10);
         uint32_t target_id = (end != value && *end == '\0') ? static_cast<uint32_t>(tid) : 0;
         graph_.set_node_target(subject, target_id);
+        auto updated = graph_.stream(subject);
+        if (updated) notify_stream_updated(*updated);
         auto r = graph_.route(subject);
         if (r) notify_route_changed(*r);
     }
@@ -636,20 +640,38 @@ bool PipeWireRouter::move_stream(uint32_t stream_id, uint32_t sink_id) {
         }
 
         // Also create a link between stream output ports and sink input ports if ports exist
-        auto out_ports = graph_.ports_for_node(stream_id);
-        auto in_ports = graph_.ports_for_node(sink_id);
+        auto all_stream_ports = graph_.ports_for_node(stream_id);
+        auto all_sink_ports = graph_.ports_for_node(sink_id);
+        std::vector<PortInfo> out_ports;
+        for (const auto& p : all_stream_ports) {
+            if (p.direction == "out") out_ports.push_back(p);
+        }
+        std::vector<PortInfo> in_ports;
+        for (const auto& p : all_sink_ports) {
+            if (p.direction == "in") in_ports.push_back(p);
+        }
 
-        for (size_t i = 0; i < out_ports.size() && i < in_ports.size(); ++i) {
-            struct spa_dict_item items[] = {
-                { PW_KEY_LINK_OUTPUT_NODE, std::to_string(stream_id).c_str() },
-                { PW_KEY_LINK_OUTPUT_PORT, std::to_string(out_ports[i].id).c_str() },
-                { PW_KEY_LINK_INPUT_NODE, std::to_string(sink_id).c_str() },
-                { PW_KEY_LINK_INPUT_PORT, std::to_string(in_ports[i].id).c_str() },
-                { PW_KEY_OBJECT_LINGER, "1" }
-            };
-            struct spa_dict dict = SPA_DICT_INIT(items, 5);
-            pw_core_create_object(core_, "link-factory", PW_TYPE_INTERFACE_Link,
-                                  PW_VERSION_LINK, &dict, 0);
+        if (core_) {
+            std::string stream_id_str = std::to_string(stream_id);
+            std::string sink_id_str = std::to_string(sink_id);
+            for (size_t i = 0; i < out_ports.size() && i < in_ports.size(); ++i) {
+                std::string out_port_str = std::to_string(out_ports[i].id);
+                std::string in_port_str = std::to_string(in_ports[i].id);
+                struct spa_dict_item items[] = {
+                    { PW_KEY_LINK_OUTPUT_NODE, stream_id_str.c_str() },
+                    { PW_KEY_LINK_OUTPUT_PORT, out_port_str.c_str() },
+                    { PW_KEY_LINK_INPUT_NODE, sink_id_str.c_str() },
+                    { PW_KEY_LINK_INPUT_PORT, in_port_str.c_str() },
+                    { PW_KEY_OBJECT_LINGER, "1" }
+                };
+                struct spa_dict dict = SPA_DICT_INIT(items, 5);
+                auto* link_proxy = static_cast<pw_proxy*>(
+                    pw_core_create_object(core_, "link-factory", PW_TYPE_INTERFACE_Link,
+                                          PW_VERSION_LINK, &dict, 0));
+                if (link_proxy) {
+                    pw_proxy_destroy(link_proxy);
+                }
+            }
         }
 
         pw_thread_loop_unlock(loop_);
@@ -657,6 +679,9 @@ bool PipeWireRouter::move_stream(uint32_t stream_id, uint32_t sink_id) {
 
     graph_.set_node_target(stream_id, sink_id);
     policy_.remember_route(st->app_id, sk->name);
+
+    auto updated = graph_.stream(stream_id);
+    if (updated) notify_stream_updated(*updated);
 
     auto r = graph_.route(stream_id);
     if (r) notify_route_changed(*r);

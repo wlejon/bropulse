@@ -195,10 +195,11 @@ void PulseRouter::handle_sink_info(const pa_sink_info* info, int eol) {
     bool is_new = !graph_.get_node(info->index).has_value();
     graph_.add_or_update_node(node);
 
+    auto sink = graph_.sink(info->index).value_or(node.to_audio_sink());
     if (is_new) {
-        notify_sink_added(node.to_audio_sink());
+        notify_sink_added(sink);
     } else {
-        notify_sink_updated(node.to_audio_sink());
+        notify_sink_updated(sink);
     }
 }
 
@@ -391,6 +392,9 @@ bool PulseRouter::move_stream(uint32_t stream_id, uint32_t sink_id) {
 
     graph_.set_node_target(stream_id, sink_id);
     policy_.remember_route(st->app_id, sk->name);
+
+    auto updated = graph_.stream(stream_id);
+    if (updated) notify_stream_updated(*updated);
 
     auto r = graph_.route(stream_id);
     if (r) notify_route_changed(*r);
